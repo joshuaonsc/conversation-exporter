@@ -1,0 +1,3 @@
+# Optional: produces cleaner YAML frontmatter escaping.
+# The script falls back to manual escaping if PyYAML is not installed.
+PyYAML>=6.0

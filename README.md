@@ -26,6 +26,7 @@ On top of that, it **preserves content basic-memory's importer drops**:
 | `tool_result` | `[Tool result]` + content            |
 | `image`       | `[Image]` placeholder                |
 | `document`    | `[Document]` placeholder             |
+| `thinking`    | `[thinking block]` marker — or the full text, quoted, with `--include-thinking` |
 
 ## Repository layout
 

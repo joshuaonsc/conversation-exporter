@@ -160,13 +160,16 @@ def safe_text(value) -> str:
     return str(value).strip()
 
 
-def extract_message_text(message: dict) -> str:
+def extract_message_text(message: dict, include_thinking: bool = False) -> str:
     """
     Extract display text from a chat message's content blocks.
 
     basic-memory only extracts blocks with a .text field and joins them with spaces,
     silently dropping tool_use, tool_result, image, and document blocks. This function
     preserves those blocks with descriptive inline labels.
+
+    Thinking blocks render as a bare "[thinking block]" marker unless include_thinking
+    is set, in which case their text is embedded as a quoted [Thinking] section.
     """
     content_blocks = message.get("content", [])
     if content_blocks and isinstance(content_blocks, list):
@@ -214,6 +217,16 @@ def extract_message_text(message: dict) -> str:
 
             elif block_type == "document":
                 parts.append("[Document]")
+
+            elif block_type == "thinking":
+                thinking_text = safe_text(block.get("thinking")) if include_thinking else ""
+                if thinking_text:
+                    quoted = "\n".join(
+                        f"> {line}" if line else ">" for line in thinking_text.splitlines()
+                    )
+                    parts.append(f"[Thinking]\n{quoted}")
+                else:
+                    parts.append("[thinking block]")
 
             else:
                 parts.append(f"[{block_type or 'unknown'} block]")
@@ -268,7 +281,7 @@ def format_attachments(message: dict) -> str:
 # Markdown conversion
 # ---------------------------------------------------------------------------
 
-def conversation_to_markdown(conversation: dict) -> str:
+def conversation_to_markdown(conversation: dict, include_thinking: bool = False) -> str:
     """
     Convert a single conversation dict to a markdown string.
 
@@ -287,7 +300,9 @@ def conversation_to_markdown(conversation: dict) -> str:
     title = conversation.get("name") or f"Conversation {uuid}"
     created = conversation.get("created_at", "")
     modified = conversation.get("updated_at", "")
-    permalink = clean_filename(title).lower().replace("_", "-")
+    # Permalink only: strip hyphens left by bracketed titles ("[x] Tuning" would
+    # otherwise yield "-x-tuning"). Filenames keep basic-memory's convention byte-for-byte.
+    permalink = clean_filename(title).lower().replace("_", "-").strip("-") or "untitled"
     messages = conversation.get("chat_messages", [])
 
     # Frontmatter — field order matches basic-memory's MarkdownProcessor:
@@ -317,7 +332,7 @@ def conversation_to_markdown(conversation: dict) -> str:
         lines.append(f"### {sender.title()} ({ts})")
 
         # Message content
-        text = extract_message_text(msg)
+        text = extract_message_text(msg, include_thinking)
         lines.append(text if text else "")
 
         # Attachments — basic-memory convention
@@ -372,6 +387,7 @@ def export_conversations(
     conversations: list[dict],
     indices: list[int],
     output_dir: str,
+    include_thinking: bool = False,
 ) -> list[str]:
     """Export selected conversations to markdown files. Returns list of output paths."""
     output_path = Path(output_dir)
@@ -387,7 +403,7 @@ def export_conversations(
             continue
 
         conv = conversations[idx]
-        markdown = conversation_to_markdown(conv)
+        markdown = conversation_to_markdown(conv, include_thinking)
 
         # Filename: {YYYYMMDD}-{Clean_Title}.md — basic-memory convention
         title = conv.get("name") or f"Conversation {conv.get('uuid', 'untitled')}"
@@ -433,6 +449,12 @@ def main():
         default=".",
         help="Output directory (default: current directory)",
     )
+    parser.add_argument(
+        "--include-thinking",
+        action="store_true",
+        help="Embed thinking-block text as quoted [Thinking] sections "
+        "(default: bare [thinking block] markers)",
+    )
 
     args = parser.parse_args()
     try:
@@ -467,7 +489,7 @@ def main():
     if args.uuid:
         for i, conv in enumerate(conversations):
             if conv.get("uuid") == args.uuid:
-                exported = export_conversations(conversations, [i], args.output)
+                exported = export_conversations(conversations, [i], args.output, args.include_thinking)
                 if exported:
                     print(f"\nDone. Exported {len(exported)} conversation(s).")
                 return
@@ -476,7 +498,7 @@ def main():
 
     if args.all:
         indices = list(range(len(conversations)))
-        exported = export_conversations(conversations, indices, args.output)
+        exported = export_conversations(conversations, indices, args.output, args.include_thinking)
         print(f"\nDone. Exported {len(exported)} conversation(s).")
         return
 
@@ -485,7 +507,7 @@ def main():
             indices = [int(x.strip()) for x in args.index.split(",") if x.strip()]
         except ValueError:
             sys.exit(f"Error: --index expects comma-separated integers, got: {args.index!r}")
-        exported = export_conversations(conversations, indices, args.output)
+        exported = export_conversations(conversations, indices, args.output, args.include_thinking)
         print(f"\nDone. Exported {len(exported)} conversation(s).")
         return
 

@@ -12,7 +12,7 @@ Given a `conversations.json` from Claude's **Settings → Account → Export Dat
 - **Search** conversations by keyword across titles and all message text
 - **Export** one, several, or all conversations to Markdown — by index, UUID, or `--all`
 
-Output filenames follow basic-memory's convention: `{YYYYMMDD}-{Clean_Title}.md`.
+Output filenames follow basic-memory's convention: `{YYYYMMDD}-{Clean_Title}.md`. Every export is tagged `cx` / `conversation-exporter` in frontmatter — searchable in basic-memory as `tag:cx`, greppable on disk — with a date-prefixed permalink matching basic-memory's slug convention.
 
 ### Formatting parity with basic-memory
 

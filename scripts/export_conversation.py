@@ -24,6 +24,7 @@ Usage:
 import json
 import sys
 import re
+import unicodedata
 import argparse
 from collections import OrderedDict
 from pathlib import Path
@@ -65,6 +66,29 @@ def clean_filename(name: str | None) -> str:
     if not name:
         name = "untitled"
     return name
+
+
+def fold_accents(s: str) -> str:
+    """Transliterate Latin accented characters to ASCII while preserving CJK.
+
+    Mirrors basic_memory.utils.generate_permalink, which unidecodes Latin chars but
+    preserves CJK ideographs — so cx permalinks match bm's for accented titles
+    (café -> cafe). Residual divergences vs bm's unidecode (exotic, accepted):
+    no CJK/Latin boundary hyphens, and one-to-many transliterations (ß -> ss,
+    kana -> romaji) keep the original character here.
+    """
+    out = []
+    for ch in s:
+        if (
+            "一" <= ch <= "鿿"  # CJK Unified Ideographs
+            or "　" <= ch <= "〿"  # CJK symbols
+            or "㐀" <= ch <= "䶿"  # CJK Extension A
+        ):
+            out.append(ch)
+        else:
+            decomposed = unicodedata.normalize("NFKD", ch)
+            out.append("".join(c for c in decomposed if not unicodedata.combining(c)))
+    return "".join(out)
 
 
 def format_timestamp(timestamp) -> str:
@@ -132,13 +156,23 @@ def render_frontmatter(metadata: OrderedDict) -> str:
         # escaping any internal single quotes by doubling them (YAML convention).
         lines = ["---"]
         for key, value in metadata.items():
-            if isinstance(value, str) and any(
-                c in value for c in ':{}[],"\'#|>&*!%@`\n'
+            # Quote when YAML would otherwise mangle the value (special chars) or
+            # retype it (numeric-looking strings, booleans, null).
+            if isinstance(value, str) and (
+                any(c in value for c in ':{}[],"\'#|>&*!%@`\n')
+                or value == ""
+                or value != value.strip()
+                or re.fullmatch(r"-?\d+(\.\d+)?", value)
+                or value.lower() in ("true", "false", "null", "yes", "no", "on", "off", "~")
             ):
                 escaped = value.replace("'", "''")
                 lines.append(f"{key}: '{escaped}'")
             elif isinstance(value, str):
                 lines.append(f"{key}: {value}")
+            elif isinstance(value, list):
+                # Block-style sequence, matching PyYAML's default_flow_style=False
+                lines.append(f"{key}:")
+                lines.extend(f"- {item}" for item in value)
             else:
                 lines.append(f"{key}: {value}")
         lines.append("---")
@@ -300,9 +334,14 @@ def conversation_to_markdown(conversation: dict, include_thinking: bool = False)
     title = conversation.get("name") or f"Conversation {uuid}"
     created = conversation.get("created_at", "")
     modified = conversation.get("updated_at", "")
-    # Permalink only: strip hyphens left by bracketed titles ("[x] Tuning" would
-    # otherwise yield "-x-tuning"). Filenames keep basic-memory's convention byte-for-byte.
-    permalink = clean_filename(title).lower().replace("_", "-").strip("-") or "untitled"
+    # Permalink matches the slug segment basic-memory's importer would generate for
+    # this conversation: generate_permalink(f"{YYYYMMDD}-{clean_filename(title)}").
+    # Verified by executing bm's own generate_permalink against this formula on a
+    # title battery (brackets, accents, CJK, punctuation runs, degenerate titles).
+    # Filenames are untouched — they keep bm's convention byte-for-byte.
+    dp = date_prefix(created)
+    slug = re.sub(r"-+", "-", fold_accents(clean_filename(title)).lower().replace("_", "-")).strip("-")
+    permalink = f"{dp}-{slug}" if slug else dp
     messages = conversation.get("chat_messages", [])
 
     # Frontmatter — field order matches basic-memory's MarkdownProcessor:
@@ -316,6 +355,9 @@ def conversation_to_markdown(conversation: dict, include_thinking: bool = False)
     frontmatter["modified"] = modified
     frontmatter["message_count"] = len(messages)
     frontmatter["source"] = "claude.ai"
+    # Provenance: marks the file as produced by this exporter. basic-memory indexes
+    # frontmatter tags for search (tag:cx), and Obsidian picks them up as #cx.
+    frontmatter["tags"] = ["cx", "conversation-exporter"]
 
     lines = []
     lines.append(render_frontmatter(frontmatter))
